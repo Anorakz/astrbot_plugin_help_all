@@ -1,0 +1,11 @@
+name: astrbot_plugin_help_all
+display_name: 功能总览
+desc: 一条命令看清机器人都会什么。动态读取当前已加载的全部插件与指令，按插件分组展示，支持关键词搜索。
+version: v1.0.0
+author: Anorakz
+repo: https://github.com/Anorakz/astrbot_plugin_help_all
+astrbot_version: ">=4.24.0,<5"
+tags:
+  - 帮助
+  - 指令
+  - 工具

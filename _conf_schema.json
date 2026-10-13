@@ -1,0 +1,14 @@
+{
+  "show_builtin": {
+    "description": "是否显示内置指令",
+    "type": "bool",
+    "hint": "内置指令指 help / sid / reset / provider 等 AstrBot 自带命令，默认显示并归到「内置指令」分组",
+    "default": true
+  },
+  "show_permission": {
+    "description": "是否标注权限要求",
+    "type": "bool",
+    "hint": "开启后，需要管理员权限的指令会标注 [需 admin]",
+    "default": true
+  }
+}
