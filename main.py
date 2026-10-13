@@ -184,6 +184,36 @@ class HelpAllPlugin(Star):
         return "".join(str(text or "").split()).lower()
 
     @staticmethod
+    def _extract_keyword(message: str) -> str:
+        """从消息里取出「命令名之后的全部内容」作为关键词。
+
+        插件名可能带空格（如 `Bangumi 增强版`），所以不能只取第二个词。
+        兼容这些写法：
+            /功能 Bangumi 增强版
+            功能 Bangumi 增强版
+            /功能 "Bangumi 增强版"
+            /功能 'Bangumi 增强版'
+        """
+        text = str(message or "").strip()
+        if text.startswith("/"):
+            text = text[1:]
+
+        parts = text.split(None, 1)
+        keyword = parts[1].strip() if len(parts) > 1 else ""
+
+        # 去掉整体包裹的引号（中英文都要处理：
+        # 中文引号 ‘’ “” 是左右不同的字符，不能靠「首尾相同」判断）
+        QUOTE_PAIRS = {
+            '"': '"', "'": "'",
+            "“": "”", "‘": "’",
+        }
+        closing = QUOTE_PAIRS.get(keyword[:1])
+        if closing and len(keyword) >= 2 and keyword.endswith(closing):
+            keyword = keyword[1:-1].strip()
+
+        return keyword
+
+    @staticmethod
     def _fit(lines: list[str]) -> tuple[str, int]:
         """按长度上限拼装，返回 (文本, 被截断的条数)。"""
         out: list[str] = []
@@ -208,8 +238,9 @@ class HelpAllPlugin(Star):
             )
             return
 
-        args = (event.message_str or "").split()
-        keyword = args[1].strip() if len(args) > 1 else ""
+        # 取「命令名之后的全部内容」作为关键词 —— 插件名里可能带空格
+        # （如「Bangumi 增强版」），只取 args[1] 会把名字截断
+        keyword = self._extract_keyword(event.message_str or "")
 
         # /功能 <插件名> —— 列出该插件的全部指令
         if keyword:
