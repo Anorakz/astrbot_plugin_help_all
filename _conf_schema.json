@@ -10,5 +10,11 @@
     "type": "bool",
     "hint": "开启后，需要管理员权限的指令会标注 [需 admin]",
     "default": true
+  },
+  "show_hint": {
+    "description": "插件清单是否显示每个插件的首条指令作为示例",
+    "type": "bool",
+    "hint": "关闭后清单更紧凑，只显示「插件名 —— N 条指令」",
+    "default": true
   }
 }

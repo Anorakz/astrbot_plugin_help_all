@@ -1,6 +1,9 @@
 """功能总览
 
-一条命令看清机器人都会什么。
+两级命令看清机器人都会什么：
+
+    /功能             → 只列插件清单（插件名 + 指令条数 + 简介）
+    /功能 <插件名>    → 列出该插件的全部指令
 
 数据来源是 AstrBot 运行时的指令注册表（`command_management.list_commands()`），
 因此**新增/删除插件后自动同步**，不需要维护任何硬编码清单。
@@ -20,14 +23,14 @@ BUILTIN_GROUP = "内置指令"
 SELF_GROUP = "功能总览"
 
 MAX_OUTPUT_CHARS = 1800
-MAX_ALIASES = 3
+MAX_ALIASES = 4
 
 
 @register(
     PLUGIN_NAME,
     "Anorakz",
-    "一条命令看清机器人都会什么，按插件分组展示并支持关键词搜索",
-    "v1.0.0",
+    "两级帮助：/功能 列插件清单，/功能 <插件名> 看该插件的全部指令",
+    "v1.1.0",
 )
 class HelpAllPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -35,7 +38,8 @@ class HelpAllPlugin(Star):
         self.config = config
         self.show_builtin = bool(config.get("show_builtin", True))
         self.show_permission = bool(config.get("show_permission", True))
-        logger.info("[help_all] 功能总览插件已加载")
+        self.show_hint = bool(config.get("show_hint", True))
+        logger.info("[help_all] 功能总览插件已加载（两级帮助 · v1.1.0）")
 
     # ── 取数 ────────────────────────────────────────────────
 
@@ -131,22 +135,53 @@ class HelpAllPlugin(Star):
             ordered[BUILTIN_GROUP] = groups[BUILTIN_GROUP]
         return ordered
 
-    def _search(self, commands: list[dict], keyword: str) -> list[dict]:
-        key = keyword.lower()
+    def _search(self, commands: list[dict], keyword: str) -> list[tuple[str, list[dict]]]:
+        """按插件归属匹配，返回 [(插件名, 该插件指令列表), ...]。
+
+        匹配优先级：
+          1. 插件名精确（忽略大小写与空格）
+          2. 插件名包含关键词 —— **可能命中多个插件，全部返回**
+          3. 指令名 / 别名精确 → 返回它所属插件
+          4. 指令名 / 别名包含关键词 → 返回命中的这些指令
+        """
+        groups = self._grouped(commands)
+
+        # 1) 插件名精确
+        for group_name, items in groups.items():
+            if self._norm(group_name) == self._norm(keyword):
+                return [(group_name, items)]
+
+        # 2) 插件名包含 —— 多命中时全部返回，交给用户选
+        contains = [
+            (group_name, items) for group_name, items in groups.items()
+            if self._norm(keyword) in self._norm(group_name)
+        ]
+        if contains:
+            return contains
+
+        # 3) 指令名 / 别名精确
+        for cmd in commands:
+            names = [self._name_of(cmd)] + [
+                str(a) for a in (cmd.get("aliases") or [])
+            ]
+            if any(self._norm(n) == self._norm(keyword) for n in names):
+                group_name = self._group_of(cmd)
+                return [(group_name, groups.get(group_name, []))]
+
+        # 4) 指令名 / 别名包含
         hits = []
         for cmd in commands:
-            haystack = " ".join(
-                [
-                    self._name_of(cmd),
-                    str(cmd.get("description") or ""),
-                    str(cmd.get("plugin") or ""),
-                    str(cmd.get("plugin_display_name") or ""),
-                    " ".join(str(a) for a in (cmd.get("aliases") or [])),
-                ]
-            ).lower()
-            if key in haystack:
+            names = [self._name_of(cmd)] + [
+                str(a) for a in (cmd.get("aliases") or [])
+            ]
+            if any(self._norm(keyword) in self._norm(n) for n in names):
                 hits.append(cmd)
-        return hits
+        return [("匹配到的指令", hits)] if hits else []
+
+    @staticmethod
+    def _norm(text: object) -> str:
+        """归一化：去空白、转小写，便于匹配插件名/指令名。"""
+        return "".join(str(text or "").split()).lower()
 
     @staticmethod
     def _fit(lines: list[str]) -> tuple[str, int]:
@@ -176,37 +211,57 @@ class HelpAllPlugin(Star):
         args = (event.message_str or "").split()
         keyword = args[1].strip() if len(args) > 1 else ""
 
+        # /功能 <插件名> —— 列出该插件的全部指令
         if keyword:
-            hits = self._search(commands, keyword)
-            if not hits:
+            matches = self._search(commands, keyword)
+            if not matches:
                 yield event.plain_result(
-                    f"没有匹配「{keyword}」的指令。\n"
-                    f"试试 /功能 看全部（当前共 {len(commands)} 条）。"
+                    f"没有找到「{keyword}」对应的插件或指令。\n"
+                    f"发 /功能 看插件清单（当前共 {len(commands)} 条指令）。"
                 )
                 return
-            lines = [f"匹配「{keyword}」的指令 · {len(hits)} 条", ""]
-            for cmd in hits:
-                lines.append(self._render(cmd))
-            text, dropped = self._fit(lines)
-            if dropped:
-                text += f"\n…… 还有 {dropped} 条被省略，换个更精确的关键词试试"
+
+            # 命中多个插件（如「bangumi」同时匹配两个插件）→ 让用户选准
+            if len(matches) > 1:
+                lines = [
+                    f"「{keyword}」匹配到 {len(matches)} 个插件，请指定一个：",
+                    "",
+                ]
+                for group_name, items in matches:
+                    lines.append(f"/功能 {group_name}   —— {len(items)} 条指令")
+                yield event.plain_result("\n".join(lines))
+                return
+
+            group_name, items = matches[0]
+            text = self._render_plugin_commands(group_name, items)
             yield event.plain_result(text)
             return
 
+        # /功能 —— 只列插件清单
         groups = self._grouped(commands)
-        lines = [f"AstrBot 功能总览 · 共 {len(commands)} 条指令", ""]
+        lines = [f"插件清单 · 共 {len(groups)} 个", ""]
         for group_name, items in groups.items():
-            lines.append(f"【{group_name}】{len(items)} 条")
-            for cmd in items:
-                lines.append(self._render(cmd))
-            lines.append("")
-
-        lines.append("想找具体的？发 /功能 <关键词>，例如 /功能 订阅")
+            line = f"/功能 {group_name}   —— {len(items)} 条指令"
+            if self.show_hint and items:
+                line += f"，如 /{self._name_of(items[0])}"
+            lines.append(line)
+        lines.append("")
+        lines.append("想看某个插件的具体指令？发 /功能 <插件名>")
 
         text, dropped = self._fit(lines)
         if dropped:
-            text += (
-                f"\n…… 因长度限制省略了 {dropped} 行，"
-                "可用 /功能 <关键词> 精确查看"
-            )
+            text += f"\n…… 因长度限制省略了 {dropped} 个插件"
         yield event.plain_result(text)
+
+    def _render_plugin_commands(self, group_name: str, items: list[dict]) -> str:
+        """渲染单个插件的指令明细。"""
+        lines = [f"【{group_name}】{len(items)} 条指令", ""]
+        for cmd in items:
+            lines.append(self._render(cmd))
+        lines.append("")
+        lines.append("发 /功能 返回插件清单")
+
+        text, dropped = self._fit(lines)
+        if dropped:
+            text += f"\n…… 还有 {dropped} 行被省略（消息长度限制）"
+        return text
